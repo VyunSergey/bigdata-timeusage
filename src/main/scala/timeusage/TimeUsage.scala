@@ -51,7 +51,7 @@ object TimeUsage extends TimeUsageInterface {
   /** @return An RDD Row compatible with the schema produced by `dfSchema`
     * @param line Raw fields
     */
-  def row(line: List[String]): Row = Row.fromSeq(line)
+  def row(line: List[String]): Row = Row.fromSeq(line.head :: line.tail.map(_.toDouble))
 
   /** @return
     * The initial data frame columns partitioned in three groups:
@@ -145,29 +145,29 @@ object TimeUsage extends TimeUsageInterface {
     // Hint: don’t forget to give your columns the expected name with the `as` method
     val workingStatusProjection: Column =
     when(col("telfs") >= 1 && col("telfs") < 3, "working")
-      .otherwise("not working").as("working")
+      .otherwise("not working").cast(StringType).as("working")
 
     val sexProjection: Column =
       when(col("tesex") === 1, "male")
-        .otherwise("female").as("sex")
+        .otherwise("female").cast(StringType).as("sex")
 
     val ageProjection: Column =
       when(col("teage") >= 15 && col("teage") <= 22, "young")
         .when(col("teage") >= 23 && col("teage") <= 55, "active")
-        .otherwise("elder").as("age")
+        .otherwise("elder").cast(StringType).as("age")
 
     // Create columns that sum columns of the initial dataset
     // Hint: you want to create a complex column expression that sums other columns
     //       by using the `+` operator between them
     // Hint: don’t forget to convert the value to hours
     val primaryNeedsProjection: Column =
-    primaryNeedsColumns.map(c => c.cast(DoubleType) / 60.0).reduce(_ + _).as("primaryNeeds")
+    primaryNeedsColumns.reduce(_ + _).divide(60).as("primaryNeeds")
 
     val workProjection: Column =
-      workColumns.map(c => c.cast(DoubleType) / 60.0).reduce(_ + _).as("work")
+      workColumns.reduce(_ + _).divide(60).as("work")
 
     val otherProjection: Column =
-      otherColumns.map(c => c.cast(DoubleType) / 60.0).reduce(_ + _).as("other")
+      otherColumns.reduce(_ + _).divide(60).as("other")
 
     df.where(col("telfs") <= 4) // Discard people who are not in labor force
       .select(
@@ -209,6 +209,11 @@ object TimeUsage extends TimeUsageInterface {
         round(avg(col("work")), 1).as("work"),
         round(avg(col("other")), 1).as("other")
       )
+      .orderBy(
+        col("working"),
+        col("sex"),
+        col("age")
+      )
   }
 
   /**
@@ -234,6 +239,10 @@ object TimeUsage extends TimeUsageInterface {
        |  round(avg(other), 1) as other
        |from $viewName
        |group by
+       |  working,
+       |  sex,
+       |  age
+       |order by
        |  working,
        |  sex,
        |  age
@@ -266,12 +275,9 @@ object TimeUsage extends TimeUsageInterface {
     summed
       .groupByKey(r => TimeUsageGroupedKey(r.working, r.sex, r.age))
       .agg(
-        round(typed.avg[TimeUsageRow](_.primaryNeeds).as("primaryNeeds"), 1)
-          .as("primaryNeeds").as[Double],
-        round(typed.avg[TimeUsageRow](_.work).as("work"), 1)
-          .as("work").as[Double],
-        round(typed.avg[TimeUsageRow](_.other).as("other"), 1)
-          .as("other").as[Double],
+        round(typed.avg[TimeUsageRow](_.primaryNeeds), 1).as[Double].name("primaryNeeds"),
+        round(typed.avg[TimeUsageRow](_.work), 1).as[Double].name("work"),
+        round(typed.avg[TimeUsageRow](_.other), 1).as[Double].name("other")
       ).as[TimeUsageGroupedRow]
       .map(r =>
         TimeUsageRow(
@@ -282,6 +288,11 @@ object TimeUsage extends TimeUsageInterface {
           r.work,
           r.other
         )
+      )
+      .orderBy(
+        col("working"),
+        col("sex"),
+        col("age")
       )
   }
 }
